@@ -1,0 +1,7 @@
+out/
+.vs/
+.vscode/
+build/
+examples/fixtures/bin
+CMakeUserPresets.json
+compile_commands.json
