@@ -133,3 +133,20 @@ add_library(bnmcp-example SHARED
 )
 target_link_libraries(bnmcp-example PRIVATE binaryninjaapi bnmcp::client)
 install(TARGETS bnmcp-example DESTINATION "$ENV{APPDATA}\\Binary Ninja\\plugins")
+
+# --- Tests ---
+set(INSTALL_GTEST OFF)
+FetchContent_Declare(bntest
+	GIT_REPOSITORY https://github.com/ek0/bn-test.git
+	GIT_TAG main
+	SYSTEM
+	EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(bntest)
+
+add_library(bnmcp-tests SHARED
+	test/llil_tools_test.cpp
+	test/test_plugin.cpp
+)
+target_link_libraries(bnmcp-tests PRIVATE bnmcp bntest)
+install(TARGETS bnmcp-tests DESTINATION "$ENV{APPDATA}\\Binary Ninja\\plugins")

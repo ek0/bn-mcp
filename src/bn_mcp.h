@@ -29,12 +29,25 @@ class BnMcp {
                             const char* input_schema_json,
                             McpToolHandler handler, void* userdata);
 
+  static nlohmann::json ExprToJson(
+      const BinaryNinja::LowLevelILInstruction& expr);
+
  private:
   void RegisterTools();
 
   nlohmann::json LoadExecutable(const nlohmann::json& args);
   nlohmann::json CloseBinaryView(const nlohmann::json& args);
   nlohmann::json ListBinaryViews(const nlohmann::json& args);
+  nlohmann::json ListLlilInstructions(const nlohmann::json& args);
+  nlohmann::json ListLlilSsaInstructions(const nlohmann::json& args);
+  nlohmann::json GetLlilExprTree(const nlohmann::json& args);
+  nlohmann::json GetLlilSsaExprTree(const nlohmann::json& args);
+
+  // Helpers
+  BinaryNinja::Ref<BinaryNinja::BinaryView> FindView(
+      const std::string& view_id);
+  nlohmann::json ListLlilImpl(const nlohmann::json& args, bool ssa);
+  nlohmann::json GetLlilExprTreeImpl(const nlohmann::json& args, bool ssa);
 
   McpServer server_;
 
