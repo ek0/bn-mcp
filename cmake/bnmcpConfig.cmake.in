@@ -1,0 +1,17 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(nlohmann_json)
+
+include("${CMAKE_CURRENT_LIST_DIR}/bnmcpTargets.cmake")
+
+# Convenience target: consumers link bnmcp::client to get the import lib,
+# include paths, and nlohmann_json.
+if(NOT TARGET bnmcp::client)
+  add_library(bnmcp::client INTERFACE IMPORTED)
+  set_target_properties(bnmcp::client PROPERTIES
+    INTERFACE_LINK_LIBRARIES "bnmcp::bnmcp-plugin;nlohmann_json::nlohmann_json"
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include")
+endif()
+
+check_required_components(bnmcp)

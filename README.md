@@ -102,6 +102,8 @@ Other plugins consume the API via FetchContent. The `bnmcp::client` target
 provides include paths, `nlohmann_json`, and the import lib for
 `bnmcp-plugin.dll`.
 
+#### Via FetchContent
+
 ```cmake
 include(FetchContent)
 
@@ -110,6 +112,17 @@ FetchContent_Declare(bn-mcp
   GIT_TAG main
 )
 FetchContent_MakeAvailable(bn-mcp)
+
+add_library(my-plugin SHARED src/plugin.cpp)
+target_link_libraries(my-plugin PRIVATE binaryninjaapi bnmcp::client)
+```
+
+#### Via find_package
+
+If bn-mcp has been installed or its build tree is on `CMAKE_PREFIX_PATH`:
+
+```cmake
+find_package(bnmcp REQUIRED)
 
 add_library(my-plugin SHARED src/plugin.cpp)
 target_link_libraries(my-plugin PRIVATE binaryninjaapi bnmcp::client)

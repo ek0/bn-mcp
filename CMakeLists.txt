@@ -56,7 +56,7 @@ target_include_directories(bnmcp-client INTERFACE
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 	$<INSTALL_INTERFACE:include>)
 target_link_libraries(bnmcp-client INTERFACE
-	nlohmann_json::nlohmann_json
+	$<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
 	bnmcp-plugin)
 
 # MCP library for Binary Ninja
@@ -88,6 +88,44 @@ target_include_directories(bnmcp-plugin PUBLIC
 target_compile_definitions(bnmcp-plugin PRIVATE BNMCP_EXPORTS)
 target_link_libraries(bnmcp-plugin PRIVATE bnmcp)
 install(TARGETS bnmcp-plugin DESTINATION "$ENV{APPDATA}\\Binary Ninja\\plugins")
+
+# --- CMake package config for consumers ---
+include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
+
+# Install the plugin DLL as an exportable package.
+install(TARGETS bnmcp-plugin
+	EXPORT bnmcpTargets
+	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+install(DIRECTORY include/bnmcp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(EXPORT bnmcpTargets
+	FILE bnmcpTargets.cmake
+	NAMESPACE bnmcp::
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/bnmcp)
+
+configure_package_config_file(
+	cmake/bnmcpConfig.cmake.in
+	"${CMAKE_CURRENT_BINARY_DIR}/bnmcpConfig.cmake"
+	INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/bnmcp)
+
+write_basic_package_version_file(
+	"${CMAKE_CURRENT_BINARY_DIR}/bnmcpConfigVersion.cmake"
+	VERSION 0.1.0
+	COMPATIBILITY SameMajorVersion)
+
+install(FILES
+	"${CMAKE_CURRENT_BINARY_DIR}/bnmcpConfig.cmake"
+	"${CMAKE_CURRENT_BINARY_DIR}/bnmcpConfigVersion.cmake"
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/bnmcp)
+
+# Export from the build tree so FetchContent consumers also get the targets.
+export(EXPORT bnmcpTargets
+	FILE "${CMAKE_CURRENT_BINARY_DIR}/bnmcpTargets.cmake"
+	NAMESPACE bnmcp::)
 
 # Example plugin using the client API
 add_library(bnmcp-example SHARED
