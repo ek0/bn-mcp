@@ -32,4 +32,9 @@ BNMCP_API bool McpRegisterTool(const char* name, const char* description,
   return g_mcp->RegisterExternalTool(name, description, input_schema_json,
                                      handler, userdata);
 }
+
+BNMCP_API BNBinaryView* McpGetView(const char* view_id) {
+  if (!g_mcp) return nullptr;
+  return g_mcp->GetView(view_id);
+}
 }

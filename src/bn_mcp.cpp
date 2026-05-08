@@ -214,6 +214,86 @@ void BnMcp::RegisterTools() {
        .handler = [this](const nlohmann::json& args) {
          return GetLlilSsaExprTree(args);
        }});
+
+  server_.RegisterTool(
+      {.name = "list_functions",
+       .description =
+           "List all functions in a binary view. Returns each function's "
+           "address, name, and size. Useful for discovering entry points and "
+           "navigating the binary.",
+       .input_schema = {{"type", "object"},
+                        {"properties",
+                         {{"view_id",
+                           {{"type", "string"},
+                            {"description",
+                             "The view ID returned by load_executable"}}}}},
+                        {"required", {"view_id"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return ListFunctions(args);
+       }});
+
+  server_.RegisterTool(
+      {.name = "get_function_info",
+       .description =
+           "Get detailed information about a function: name, calling "
+           "convention, parameters, return type, and basic block count.",
+       .input_schema = {{"type", "object"},
+                        {"properties",
+                         {{"view_id",
+                           {{"type", "string"},
+                            {"description",
+                             "The view ID returned by load_executable"}}},
+                          {"address",
+                           {{"type", "integer"},
+                            {"description", "Address of the function"}}}}},
+                        {"required", {"view_id", "address"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return GetFunctionInfo(args);
+       }});
+
+  server_.RegisterTool(
+      {.name = "get_strings",
+       .description =
+           "List strings found in a binary view. Optionally filter to a "
+           "specific address range. Returns each string's address, length, "
+           "and content.",
+       .input_schema =
+           {{"type", "object"},
+            {"properties",
+             {{"view_id",
+               {{"type", "string"},
+                {"description", "The view ID returned by load_executable"}}},
+              {"start",
+               {{"type", "integer"},
+                {"description", "Start address for filtering (optional)"}}},
+              {"length",
+               {{"type", "integer"},
+                {"description",
+                 "Length of address range for filtering (optional)"}}}}},
+            {"required", {"view_id"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return GetStrings(args);
+       }});
+
+  server_.RegisterTool(
+      {.name = "get_xrefs",
+       .description =
+           "Get cross-references to a given address. Returns code references "
+           "(callers) and data references pointing to the address. Useful for "
+           "understanding call graphs and data usage.",
+       .input_schema =
+           {{"type", "object"},
+            {"properties",
+             {{"view_id",
+               {{"type", "string"},
+                {"description", "The view ID returned by load_executable"}}},
+              {"address",
+               {{"type", "integer"},
+                {"description", "Target address to find references to"}}}}},
+            {"required", {"view_id", "address"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return GetXrefs(args);
+       }});
 }
 
 nlohmann::json BnMcp::LoadExecutable(const nlohmann::json& args) {
@@ -331,152 +411,159 @@ binja::Ref<binja::BinaryView> BnMcp::FindView(const std::string& view_id) {
   return it->second;
 }
 
+BNBinaryView* BnMcp::GetView(const char* view_id) {
+  std::lock_guard lock(views_mutex_);
+  auto it = views_.find(view_id);
+  if (it == views_.end()) return nullptr;
+  return BNNewViewReference(it->second->GetObject());
+}
+
 static const char* LlilOpName(BNLowLevelILOperation op) {
   // Must match the BNLowLevelILOperation enum order in binaryninjacore.h.
   static const char* const kNames[] = {
-      "NOP",                        // LLIL_NOP
-      "SET_REG",                    // LLIL_SET_REG
-      "SET_REG_SPLIT",              // LLIL_SET_REG_SPLIT
-      "SET_FLAG",                   // LLIL_SET_FLAG
-      "SET_REG_STACK_REL",          // LLIL_SET_REG_STACK_REL
-      "REG_STACK_PUSH",             // LLIL_REG_STACK_PUSH
-      "ASSERT",                     // LLIL_ASSERT
-      "FORCE_VER",                  // LLIL_FORCE_VER
-      "LOAD",                       // LLIL_LOAD
-      "STORE",                      // LLIL_STORE
-      "PUSH",                       // LLIL_PUSH
-      "POP",                        // LLIL_POP
-      "REG",                        // LLIL_REG
-      "REG_SPLIT",                  // LLIL_REG_SPLIT
-      "REG_STACK_REL",              // LLIL_REG_STACK_REL
-      "REG_STACK_POP",              // LLIL_REG_STACK_POP
-      "REG_STACK_FREE_REG",         // LLIL_REG_STACK_FREE_REG
-      "REG_STACK_FREE_REL",         // LLIL_REG_STACK_FREE_REL
-      "CONST",                      // LLIL_CONST
-      "CONST_PTR",                  // LLIL_CONST_PTR
-      "EXTERN_PTR",                 // LLIL_EXTERN_PTR
-      "FLOAT_CONST",                // LLIL_FLOAT_CONST
-      "FLAG",                       // LLIL_FLAG
-      "FLAG_BIT",                   // LLIL_FLAG_BIT
-      "ADD",                        // LLIL_ADD
-      "ADC",                        // LLIL_ADC
-      "SUB",                        // LLIL_SUB
-      "SBB",                        // LLIL_SBB
-      "AND",                        // LLIL_AND
-      "OR",                         // LLIL_OR
-      "XOR",                        // LLIL_XOR
-      "LSL",                        // LLIL_LSL
-      "LSR",                        // LLIL_LSR
-      "ASR",                        // LLIL_ASR
-      "ROL",                        // LLIL_ROL
-      "RLC",                        // LLIL_RLC
-      "ROR",                        // LLIL_ROR
-      "RRC",                        // LLIL_RRC
-      "MUL",                        // LLIL_MUL
-      "MULU_DP",                    // LLIL_MULU_DP
-      "MULS_DP",                    // LLIL_MULS_DP
-      "DIVU",                       // LLIL_DIVU
-      "DIVU_DP",                    // LLIL_DIVU_DP
-      "DIVS",                       // LLIL_DIVS
-      "DIVS_DP",                    // LLIL_DIVS_DP
-      "MODU",                       // LLIL_MODU
-      "MODU_DP",                    // LLIL_MODU_DP
-      "MODS",                       // LLIL_MODS
-      "MODS_DP",                    // LLIL_MODS_DP
-      "NEG",                        // LLIL_NEG
-      "NOT",                        // LLIL_NOT
-      "SX",                         // LLIL_SX
-      "ZX",                         // LLIL_ZX
-      "LOW_PART",                   // LLIL_LOW_PART
-      "JUMP",                       // LLIL_JUMP
-      "JUMP_TO",                    // LLIL_JUMP_TO
-      "CALL",                       // LLIL_CALL
-      "CALL_STACK_ADJUST",          // LLIL_CALL_STACK_ADJUST
-      "TAILCALL",                   // LLIL_TAILCALL
-      "RET",                        // LLIL_RET
-      "NORET",                      // LLIL_NORET
-      "IF",                         // LLIL_IF
-      "GOTO",                       // LLIL_GOTO
-      "FLAG_COND",                  // LLIL_FLAG_COND
-      "FLAG_GROUP",                 // LLIL_FLAG_GROUP
-      "CMP_E",                      // LLIL_CMP_E
-      "CMP_NE",                     // LLIL_CMP_NE
-      "CMP_SLT",                    // LLIL_CMP_SLT
-      "CMP_ULT",                    // LLIL_CMP_ULT
-      "CMP_SLE",                    // LLIL_CMP_SLE
-      "CMP_ULE",                    // LLIL_CMP_ULE
-      "CMP_SGE",                    // LLIL_CMP_SGE
-      "CMP_UGE",                    // LLIL_CMP_UGE
-      "CMP_SGT",                    // LLIL_CMP_SGT
-      "CMP_UGT",                    // LLIL_CMP_UGT
-      "TEST_BIT",                   // LLIL_TEST_BIT
-      "BOOL_TO_INT",                // LLIL_BOOL_TO_INT
-      "ADD_OVERFLOW",               // LLIL_ADD_OVERFLOW
-      "SYSCALL",                    // LLIL_SYSCALL
-      "BP",                         // LLIL_BP
-      "TRAP",                       // LLIL_TRAP
-      "INTRINSIC",                  // LLIL_INTRINSIC
-      "UNDEF",                      // LLIL_UNDEF
-      "UNIMPL",                     // LLIL_UNIMPL
-      "UNIMPL_MEM",                 // LLIL_UNIMPL_MEM
-      "FADD",                       // LLIL_FADD
-      "FSUB",                       // LLIL_FSUB
-      "FMUL",                       // LLIL_FMUL
-      "FDIV",                       // LLIL_FDIV
-      "FSQRT",                      // LLIL_FSQRT
-      "FNEG",                       // LLIL_FNEG
-      "FABS",                       // LLIL_FABS
-      "FLOAT_TO_INT",               // LLIL_FLOAT_TO_INT
-      "INT_TO_FLOAT",               // LLIL_INT_TO_FLOAT
-      "FLOAT_CONV",                 // LLIL_FLOAT_CONV
-      "ROUND_TO_INT",               // LLIL_ROUND_TO_INT
-      "FLOOR",                      // LLIL_FLOOR
-      "CEIL",                       // LLIL_CEIL
-      "FTRUNC",                     // LLIL_FTRUNC
-      "FCMP_E",                     // LLIL_FCMP_E
-      "FCMP_NE",                    // LLIL_FCMP_NE
-      "FCMP_LT",                    // LLIL_FCMP_LT
-      "FCMP_LE",                    // LLIL_FCMP_LE
-      "FCMP_GE",                    // LLIL_FCMP_GE
-      "FCMP_GT",                    // LLIL_FCMP_GT
-      "FCMP_O",                     // LLIL_FCMP_O
-      "FCMP_UO",                    // LLIL_FCMP_UO
-      "SET_REG_SSA",                // LLIL_SET_REG_SSA
-      "SET_REG_SSA_PARTIAL",        // LLIL_SET_REG_SSA_PARTIAL
-      "SET_REG_SPLIT_SSA",          // LLIL_SET_REG_SPLIT_SSA
-      "SET_REG_STACK_REL_SSA",      // LLIL_SET_REG_STACK_REL_SSA
-      "SET_REG_STACK_ABS_SSA",      // LLIL_SET_REG_STACK_ABS_SSA
-      "REG_SPLIT_DEST_SSA",         // LLIL_REG_SPLIT_DEST_SSA
-      "REG_STACK_DEST_SSA",         // LLIL_REG_STACK_DEST_SSA
-      "REG_SSA",                    // LLIL_REG_SSA
-      "REG_SSA_PARTIAL",            // LLIL_REG_SSA_PARTIAL
-      "REG_SPLIT_SSA",              // LLIL_REG_SPLIT_SSA
-      "REG_STACK_REL_SSA",          // LLIL_REG_STACK_REL_SSA
-      "REG_STACK_ABS_SSA",          // LLIL_REG_STACK_ABS_SSA
-      "REG_STACK_FREE_REL_SSA",     // LLIL_REG_STACK_FREE_REL_SSA
-      "REG_STACK_FREE_ABS_SSA",     // LLIL_REG_STACK_FREE_ABS_SSA
-      "SET_FLAG_SSA",               // LLIL_SET_FLAG_SSA
-      "ASSERT_SSA",                 // LLIL_ASSERT_SSA
-      "FORCE_VER_SSA",              // LLIL_FORCE_VER_SSA
-      "FLAG_SSA",                   // LLIL_FLAG_SSA
-      "FLAG_BIT_SSA",               // LLIL_FLAG_BIT_SSA
-      "CALL_SSA",                   // LLIL_CALL_SSA
-      "SYSCALL_SSA",                // LLIL_SYSCALL_SSA
-      "TAILCALL_SSA",               // LLIL_TAILCALL_SSA
-      "CALL_PARAM",                 // LLIL_CALL_PARAM
-      "CALL_STACK_SSA",             // LLIL_CALL_STACK_SSA
-      "CALL_OUTPUT_SSA",            // LLIL_CALL_OUTPUT_SSA
-      "SEPARATE_PARAM_LIST_SSA",    // LLIL_SEPARATE_PARAM_LIST_SSA
-      "SHARED_PARAM_SLOT_SSA",      // LLIL_SHARED_PARAM_SLOT_SSA
+      "NOP",                          // LLIL_NOP
+      "SET_REG",                      // LLIL_SET_REG
+      "SET_REG_SPLIT",                // LLIL_SET_REG_SPLIT
+      "SET_FLAG",                     // LLIL_SET_FLAG
+      "SET_REG_STACK_REL",            // LLIL_SET_REG_STACK_REL
+      "REG_STACK_PUSH",               // LLIL_REG_STACK_PUSH
+      "ASSERT",                       // LLIL_ASSERT
+      "FORCE_VER",                    // LLIL_FORCE_VER
+      "LOAD",                         // LLIL_LOAD
+      "STORE",                        // LLIL_STORE
+      "PUSH",                         // LLIL_PUSH
+      "POP",                          // LLIL_POP
+      "REG",                          // LLIL_REG
+      "REG_SPLIT",                    // LLIL_REG_SPLIT
+      "REG_STACK_REL",                // LLIL_REG_STACK_REL
+      "REG_STACK_POP",                // LLIL_REG_STACK_POP
+      "REG_STACK_FREE_REG",           // LLIL_REG_STACK_FREE_REG
+      "REG_STACK_FREE_REL",           // LLIL_REG_STACK_FREE_REL
+      "CONST",                        // LLIL_CONST
+      "CONST_PTR",                    // LLIL_CONST_PTR
+      "EXTERN_PTR",                   // LLIL_EXTERN_PTR
+      "FLOAT_CONST",                  // LLIL_FLOAT_CONST
+      "FLAG",                         // LLIL_FLAG
+      "FLAG_BIT",                     // LLIL_FLAG_BIT
+      "ADD",                          // LLIL_ADD
+      "ADC",                          // LLIL_ADC
+      "SUB",                          // LLIL_SUB
+      "SBB",                          // LLIL_SBB
+      "AND",                          // LLIL_AND
+      "OR",                           // LLIL_OR
+      "XOR",                          // LLIL_XOR
+      "LSL",                          // LLIL_LSL
+      "LSR",                          // LLIL_LSR
+      "ASR",                          // LLIL_ASR
+      "ROL",                          // LLIL_ROL
+      "RLC",                          // LLIL_RLC
+      "ROR",                          // LLIL_ROR
+      "RRC",                          // LLIL_RRC
+      "MUL",                          // LLIL_MUL
+      "MULU_DP",                      // LLIL_MULU_DP
+      "MULS_DP",                      // LLIL_MULS_DP
+      "DIVU",                         // LLIL_DIVU
+      "DIVU_DP",                      // LLIL_DIVU_DP
+      "DIVS",                         // LLIL_DIVS
+      "DIVS_DP",                      // LLIL_DIVS_DP
+      "MODU",                         // LLIL_MODU
+      "MODU_DP",                      // LLIL_MODU_DP
+      "MODS",                         // LLIL_MODS
+      "MODS_DP",                      // LLIL_MODS_DP
+      "NEG",                          // LLIL_NEG
+      "NOT",                          // LLIL_NOT
+      "SX",                           // LLIL_SX
+      "ZX",                           // LLIL_ZX
+      "LOW_PART",                     // LLIL_LOW_PART
+      "JUMP",                         // LLIL_JUMP
+      "JUMP_TO",                      // LLIL_JUMP_TO
+      "CALL",                         // LLIL_CALL
+      "CALL_STACK_ADJUST",            // LLIL_CALL_STACK_ADJUST
+      "TAILCALL",                     // LLIL_TAILCALL
+      "RET",                          // LLIL_RET
+      "NORET",                        // LLIL_NORET
+      "IF",                           // LLIL_IF
+      "GOTO",                         // LLIL_GOTO
+      "FLAG_COND",                    // LLIL_FLAG_COND
+      "FLAG_GROUP",                   // LLIL_FLAG_GROUP
+      "CMP_E",                        // LLIL_CMP_E
+      "CMP_NE",                       // LLIL_CMP_NE
+      "CMP_SLT",                      // LLIL_CMP_SLT
+      "CMP_ULT",                      // LLIL_CMP_ULT
+      "CMP_SLE",                      // LLIL_CMP_SLE
+      "CMP_ULE",                      // LLIL_CMP_ULE
+      "CMP_SGE",                      // LLIL_CMP_SGE
+      "CMP_UGE",                      // LLIL_CMP_UGE
+      "CMP_SGT",                      // LLIL_CMP_SGT
+      "CMP_UGT",                      // LLIL_CMP_UGT
+      "TEST_BIT",                     // LLIL_TEST_BIT
+      "BOOL_TO_INT",                  // LLIL_BOOL_TO_INT
+      "ADD_OVERFLOW",                 // LLIL_ADD_OVERFLOW
+      "SYSCALL",                      // LLIL_SYSCALL
+      "BP",                           // LLIL_BP
+      "TRAP",                         // LLIL_TRAP
+      "INTRINSIC",                    // LLIL_INTRINSIC
+      "UNDEF",                        // LLIL_UNDEF
+      "UNIMPL",                       // LLIL_UNIMPL
+      "UNIMPL_MEM",                   // LLIL_UNIMPL_MEM
+      "FADD",                         // LLIL_FADD
+      "FSUB",                         // LLIL_FSUB
+      "FMUL",                         // LLIL_FMUL
+      "FDIV",                         // LLIL_FDIV
+      "FSQRT",                        // LLIL_FSQRT
+      "FNEG",                         // LLIL_FNEG
+      "FABS",                         // LLIL_FABS
+      "FLOAT_TO_INT",                 // LLIL_FLOAT_TO_INT
+      "INT_TO_FLOAT",                 // LLIL_INT_TO_FLOAT
+      "FLOAT_CONV",                   // LLIL_FLOAT_CONV
+      "ROUND_TO_INT",                 // LLIL_ROUND_TO_INT
+      "FLOOR",                        // LLIL_FLOOR
+      "CEIL",                         // LLIL_CEIL
+      "FTRUNC",                       // LLIL_FTRUNC
+      "FCMP_E",                       // LLIL_FCMP_E
+      "FCMP_NE",                      // LLIL_FCMP_NE
+      "FCMP_LT",                      // LLIL_FCMP_LT
+      "FCMP_LE",                      // LLIL_FCMP_LE
+      "FCMP_GE",                      // LLIL_FCMP_GE
+      "FCMP_GT",                      // LLIL_FCMP_GT
+      "FCMP_O",                       // LLIL_FCMP_O
+      "FCMP_UO",                      // LLIL_FCMP_UO
+      "SET_REG_SSA",                  // LLIL_SET_REG_SSA
+      "SET_REG_SSA_PARTIAL",          // LLIL_SET_REG_SSA_PARTIAL
+      "SET_REG_SPLIT_SSA",            // LLIL_SET_REG_SPLIT_SSA
+      "SET_REG_STACK_REL_SSA",        // LLIL_SET_REG_STACK_REL_SSA
+      "SET_REG_STACK_ABS_SSA",        // LLIL_SET_REG_STACK_ABS_SSA
+      "REG_SPLIT_DEST_SSA",           // LLIL_REG_SPLIT_DEST_SSA
+      "REG_STACK_DEST_SSA",           // LLIL_REG_STACK_DEST_SSA
+      "REG_SSA",                      // LLIL_REG_SSA
+      "REG_SSA_PARTIAL",              // LLIL_REG_SSA_PARTIAL
+      "REG_SPLIT_SSA",                // LLIL_REG_SPLIT_SSA
+      "REG_STACK_REL_SSA",            // LLIL_REG_STACK_REL_SSA
+      "REG_STACK_ABS_SSA",            // LLIL_REG_STACK_ABS_SSA
+      "REG_STACK_FREE_REL_SSA",       // LLIL_REG_STACK_FREE_REL_SSA
+      "REG_STACK_FREE_ABS_SSA",       // LLIL_REG_STACK_FREE_ABS_SSA
+      "SET_FLAG_SSA",                 // LLIL_SET_FLAG_SSA
+      "ASSERT_SSA",                   // LLIL_ASSERT_SSA
+      "FORCE_VER_SSA",                // LLIL_FORCE_VER_SSA
+      "FLAG_SSA",                     // LLIL_FLAG_SSA
+      "FLAG_BIT_SSA",                 // LLIL_FLAG_BIT_SSA
+      "CALL_SSA",                     // LLIL_CALL_SSA
+      "SYSCALL_SSA",                  // LLIL_SYSCALL_SSA
+      "TAILCALL_SSA",                 // LLIL_TAILCALL_SSA
+      "CALL_PARAM",                   // LLIL_CALL_PARAM
+      "CALL_STACK_SSA",               // LLIL_CALL_STACK_SSA
+      "CALL_OUTPUT_SSA",              // LLIL_CALL_OUTPUT_SSA
+      "SEPARATE_PARAM_LIST_SSA",      // LLIL_SEPARATE_PARAM_LIST_SSA
+      "SHARED_PARAM_SLOT_SSA",        // LLIL_SHARED_PARAM_SLOT_SSA
       "MEMORY_INTRINSIC_OUTPUT_SSA",  // LLIL_MEMORY_INTRINSIC_OUTPUT_SSA
-      "LOAD_SSA",                   // LLIL_LOAD_SSA
-      "STORE_SSA",                  // LLIL_STORE_SSA
-      "INTRINSIC_SSA",              // LLIL_INTRINSIC_SSA
-      "MEMORY_INTRINSIC_SSA",       // LLIL_MEMORY_INTRINSIC_SSA
-      "REG_PHI",                    // LLIL_REG_PHI
-      "REG_STACK_PHI",              // LLIL_REG_STACK_PHI
-      "FLAG_PHI",                   // LLIL_FLAG_PHI
-      "MEM_PHI",                    // LLIL_MEM_PHI
+      "LOAD_SSA",                     // LLIL_LOAD_SSA
+      "STORE_SSA",                    // LLIL_STORE_SSA
+      "INTRINSIC_SSA",                // LLIL_INTRINSIC_SSA
+      "MEMORY_INTRINSIC_SSA",         // LLIL_MEMORY_INTRINSIC_SSA
+      "REG_PHI",                      // LLIL_REG_PHI
+      "REG_STACK_PHI",                // LLIL_REG_STACK_PHI
+      "FLAG_PHI",                     // LLIL_FLAG_PHI
+      "MEM_PHI",                      // LLIL_MEM_PHI
   };
   auto idx = static_cast<size_t>(op);
   if (idx < std::size(kNames)) return kNames[idx];
@@ -708,6 +795,170 @@ nlohmann::json BnMcp::GetLlilExprTreeImpl(const nlohmann::json& args,
   tree["instr_index"] = instr_index;
 
   return {{"content", {{{"type", "text"}, {"text", tree.dump(2)}}}}};
+}
+
+nlohmann::json BnMcp::ListFunctions(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  auto functions = bv->GetAnalysisFunctionList();
+  std::string result = std::format("Functions ({}):\n", functions.size());
+
+  for (const auto& func : functions) {
+    auto name = func->GetSymbol() ? func->GetSymbol()->GetFullName()
+                                  : std::format("sub_{:x}", func->GetStart());
+    auto bbs = func->GetBasicBlocks();
+    uint64_t size = 0;
+    for (const auto& bb : bbs) size += bb->GetEnd() - bb->GetStart();
+    result +=
+        std::format("  0x{:x}  {:6d}  {}\n", func->GetStart(), size, name);
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+nlohmann::json BnMcp::GetFunctionInfo(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+  auto address = args.at("address").get<uint64_t>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  auto funcs = bv->GetAnalysisFunctionsForAddress(address);
+  if (funcs.empty()) {
+    return {
+        {"content",
+         {{{"type", "text"},
+           {"text", std::format("No function at address 0x{:x}", address)}}}},
+        {"isError", true}};
+  }
+
+  auto func = funcs[0];
+  auto name = func->GetSymbol() ? func->GetSymbol()->GetFullName()
+                                : std::format("sub_{:x}", func->GetStart());
+
+  auto bbs = func->GetBasicBlocks();
+  auto type = func->GetType();
+
+  std::string cc_name = "unknown";
+  if (type) {
+    auto cc = type->GetCallingConvention();
+    if (cc.GetValue()) cc_name = cc.GetValue()->GetName();
+  }
+
+  std::string ret_type = "void";
+  if (type) {
+    auto rt = type->GetChildType();
+    if (rt.GetValue()) ret_type = rt.GetValue()->GetString();
+  }
+
+  std::string params;
+  auto param_vars = func->GetParameterVariables().GetValue();
+  for (size_t i = 0; i < param_vars.size(); i++) {
+    auto& pv = param_vars[i];
+    auto ptype = func->GetVariableType(pv);
+    auto pname = func->GetVariableName(pv);
+    if (pname.empty()) pname = std::format("arg{}", i);
+    std::string tstr = ptype.GetValue() ? ptype.GetValue()->GetString() : "?";
+    if (i > 0) params += ", ";
+    params += tstr + " " + pname;
+  }
+
+  auto result = std::format(
+      "Function: {}\n"
+      "Address: 0x{:x}\n"
+      "Calling convention: {}\n"
+      "Return type: {}\n"
+      "Parameters: ({})\n"
+      "Basic blocks: {}\n",
+      name, func->GetStart(), cc_name, ret_type, params, bbs.size());
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+nlohmann::json BnMcp::GetStrings(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  std::vector<BNStringReference> strings;
+  if (args.contains("start") && args.contains("length")) {
+    auto start = args["start"].get<uint64_t>();
+    auto length = args["length"].get<uint64_t>();
+    strings = bv->GetStrings(start, length);
+  } else {
+    strings = bv->GetStrings();
+  }
+
+  std::string result = std::format("Strings ({}):\n", strings.size());
+  for (const auto& s : strings) {
+    auto buf = bv->ReadBuffer(s.start, s.length);
+    std::string content(static_cast<const char*>(buf.GetData()),
+                        std::min(s.length, static_cast<size_t>(256)));
+    // Escape newlines for readability.
+    for (auto& c : content) {
+      if (c == '\n') c = ' ';
+      if (c == '\r') c = ' ';
+    }
+    result += std::format("  0x{:x}  len={:4d}  \"{}\"\n", s.start, s.length,
+                          content);
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+nlohmann::json BnMcp::GetXrefs(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+  auto address = args.at("address").get<uint64_t>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  auto code_refs = bv->GetCallers(address);
+  auto data_refs = bv->GetDataReferences(address);
+
+  std::string result = std::format("Cross-references to 0x{:x}:\n", address);
+
+  result += std::format("\nCode references ({}):\n", code_refs.size());
+  for (const auto& ref : code_refs) {
+    std::string func_name = "unknown";
+    if (ref.func) {
+      auto sym = ref.func->GetSymbol();
+      func_name = sym ? sym->GetFullName()
+                      : std::format("sub_{:x}", ref.func->GetStart());
+    }
+    result += std::format("  0x{:x}  in {}\n", ref.addr, func_name);
+  }
+
+  result += std::format("\nData references ({}):\n", data_refs.size());
+  for (auto addr : data_refs) {
+    result += std::format("  0x{:x}\n", addr);
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
 }
 
 }  // namespace bnmcp

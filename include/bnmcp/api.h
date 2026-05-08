@@ -46,6 +46,12 @@ BNMCP_API bool McpRegisterTool(const char* name, const char* description,
                                const char* input_schema_json,
                                McpToolHandler handler, void* userdata);
 
+// Look up a managed BinaryView by its view ID (returned by load_executable).
+// Returns a new reference to the BNBinaryView, or NULL if not found.
+// The caller owns the returned reference and must free it with
+// BNFreeBinaryView when done.
+BNMCP_API BNBinaryView* McpGetView(const char* view_id);
+
 #ifdef __cplusplus
 }
 #endif
@@ -53,6 +59,8 @@ BNMCP_API bool McpRegisterTool(const char* name, const char* description,
 // --- C++ convenience wrapper ---
 
 #ifdef __cplusplus
+
+#include <binaryninjaapi.h>
 
 #include <functional>
 #include <nlohmann/json.hpp>
@@ -62,6 +70,14 @@ BNMCP_API bool McpRegisterTool(const char* name, const char* description,
 namespace bnmcp::client {
 
 using HandlerFn = std::function<nlohmann::json(const nlohmann::json&)>;
+
+// Resolve a view ID to a BinaryView. Returns nullptr if not found.
+inline BinaryNinja::Ref<BinaryNinja::BinaryView> GetView(
+    std::string_view view_id) {
+  auto* core_view = McpGetView(std::string(view_id).c_str());
+  if (!core_view) return nullptr;
+  return new BinaryNinja::BinaryView(core_view);
+}
 
 // Register a tool with the MCP server.
 inline bool RegisterTool(std::string_view name, std::string_view description,

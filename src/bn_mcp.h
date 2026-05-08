@@ -32,6 +32,10 @@ class BnMcp {
   static nlohmann::json ExprToJson(
       const BinaryNinja::LowLevelILInstruction& expr);
 
+  // Look up a managed BinaryView by ID. Returns a new reference (caller
+  // must release). Returns nullptr if not found.
+  BNBinaryView* GetView(const char* view_id);
+
  private:
   void RegisterTools();
 
@@ -42,6 +46,10 @@ class BnMcp {
   nlohmann::json ListLlilSsaInstructions(const nlohmann::json& args);
   nlohmann::json GetLlilExprTree(const nlohmann::json& args);
   nlohmann::json GetLlilSsaExprTree(const nlohmann::json& args);
+  nlohmann::json ListFunctions(const nlohmann::json& args);
+  nlohmann::json GetFunctionInfo(const nlohmann::json& args);
+  nlohmann::json GetStrings(const nlohmann::json& args);
+  nlohmann::json GetXrefs(const nlohmann::json& args);
 
   // Helpers
   BinaryNinja::Ref<BinaryNinja::BinaryView> FindView(
