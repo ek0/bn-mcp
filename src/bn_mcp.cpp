@@ -1,6 +1,7 @@
 #include "bn_mcp.h"
 
 #include <binaryninjaapi.h>
+#include <binaryninjacore.h>
 #include <lowlevelilinstruction.h>
 
 #include <format>
