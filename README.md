@@ -196,4 +196,4 @@ folder and run via Plugin Commands → `[bn-mcp] Run Tests`.
 
 ## License
 
-TBD
+MIT — see [LICENSE](LICENSE).
