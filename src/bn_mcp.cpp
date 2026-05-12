@@ -294,6 +294,44 @@ void BnMcp::RegisterTools() {
        .handler = [this](const nlohmann::json& args) {
          return GetXrefs(args);
        }});
+
+  server_.RegisterTool(
+      {.name = "list_types",
+       .description =
+           "List all types defined in a binary view. Returns each type's "
+           "name, kind (struct, enum, union, typedef, etc.), and size in "
+           "bytes.",
+       .input_schema = {{"type", "object"},
+                        {"properties",
+                         {{"view_id",
+                           {{"type", "string"},
+                            {"description",
+                             "The view ID returned by load_executable"}}}}},
+                        {"required", {"view_id"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return ListTypes(args);
+       }});
+
+  server_.RegisterTool(
+      {.name = "get_type_info",
+       .description =
+           "Get detailed information about a named type. For structs/unions: "
+           "lists each member with name, type, offset, and size. For enums: "
+           "lists each value with name and integer constant. For typedefs: "
+           "shows the underlying type.",
+       .input_schema = {{"type", "object"},
+                        {"properties",
+                         {{"view_id",
+                           {{"type", "string"},
+                            {"description",
+                             "The view ID returned by load_executable"}}},
+                          {"type_name",
+                           {{"type", "string"},
+                            {"description", "Name of the type to look up"}}}}},
+                        {"required", {"view_id", "type_name"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return GetTypeInfo(args);
+       }});
 }
 
 nlohmann::json BnMcp::LoadExecutable(const nlohmann::json& args) {
@@ -956,6 +994,156 @@ nlohmann::json BnMcp::GetXrefs(const nlohmann::json& args) {
   result += std::format("\nData references ({}):\n", data_refs.size());
   for (auto addr : data_refs) {
     result += std::format("  0x{:x}\n", addr);
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+static const char* TypeClassName(BNTypeClass tc) {
+  switch (tc) {
+    case VoidTypeClass:
+      return "void";
+    case BoolTypeClass:
+      return "bool";
+    case IntegerTypeClass:
+      return "integer";
+    case FloatTypeClass:
+      return "float";
+    case StructureTypeClass:
+      return "struct";
+    case EnumerationTypeClass:
+      return "enum";
+    case PointerTypeClass:
+      return "pointer";
+    case ArrayTypeClass:
+      return "array";
+    case FunctionTypeClass:
+      return "function";
+    case VarArgsTypeClass:
+      return "varargs";
+    case ValueTypeClass:
+      return "value";
+    case NamedTypeReferenceClass:
+      return "typedef";
+    case WideCharTypeClass:
+      return "widechar";
+    default:
+      return "unknown";
+  }
+}
+
+nlohmann::json BnMcp::ListTypes(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  auto types = bv->GetTypes();
+
+  std::string result = std::format("Types ({}):\n", types.size());
+  for (const auto& [name, type] : types) {
+    auto tc = type->GetClass();
+    auto kind = TypeClassName(tc);
+    auto width = type->GetWidth();
+
+    // For structs, show union vs struct.
+    if (tc == StructureTypeClass) {
+      auto structure = type->GetStructure();
+      if (structure && structure->IsUnion()) kind = "union";
+    }
+
+    result += std::format("  {:40s}  {:10s}  {:d} bytes\n", name.GetString(),
+                          kind, width);
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+nlohmann::json BnMcp::GetTypeInfo(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+  auto type_name = args.at("type_name").get<std::string>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  auto type = bv->GetTypeByName(type_name);
+  if (!type) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("Type '{}' not found", type_name)}}}},
+            {"isError", true}};
+  }
+
+  auto tc = type->GetClass();
+  auto kind = TypeClassName(tc);
+  auto width = type->GetWidth();
+
+  std::string result;
+
+  if (tc == StructureTypeClass) {
+    auto structure = type->GetStructure();
+    if (!structure) {
+      return {{"content",
+               {{{"type", "text"}, {"text", "Failed to get structure info"}}}},
+              {"isError", true}};
+    }
+    auto variant = structure->IsUnion() ? "union" : "struct";
+    result = std::format("Type: {} ({}, {} bytes)\nMembers:\n", type_name,
+                         variant, width);
+    for (const auto& member : structure->GetMembers()) {
+      auto mtype_str =
+          member.type.GetValue() ? member.type.GetValue()->GetString() : "?";
+      auto mwidth =
+          member.type.GetValue() ? member.type.GetValue()->GetWidth() : 0;
+      result += std::format("  +0x{:04x}  {:30s}  {}  ({} bytes)\n",
+                            member.offset, mtype_str, member.name, mwidth);
+    }
+  } else if (tc == EnumerationTypeClass) {
+    auto enumeration = type->GetEnumeration();
+    if (!enumeration) {
+      return {
+          {"content",
+           {{{"type", "text"}, {"text", "Failed to get enumeration info"}}}},
+          {"isError", true}};
+    }
+    result =
+        std::format("Type: {} (enum, {} bytes)\nValues:\n", type_name, width);
+    for (const auto& member : enumeration->GetMembers()) {
+      result += std::format("  {} = {}\n", member.name, member.value);
+    }
+  } else if (tc == NamedTypeReferenceClass) {
+    auto child = type->GetChildType();
+    auto underlying =
+        child.GetValue() ? child.GetValue()->GetString() : "unknown";
+    result = std::format("Type: {} (typedef)\n  → {}\n", type_name, underlying);
+  } else if (tc == PointerTypeClass) {
+    auto child = type->GetChildType();
+    auto pointee = child.GetValue() ? child.GetValue()->GetString() : "unknown";
+    result = std::format("Type: {} (pointer, {} bytes)\n  → {}*\n", type_name,
+                         width, pointee);
+  } else if (tc == ArrayTypeClass) {
+    auto child = type->GetChildType();
+    auto elem = child.GetValue() ? child.GetValue()->GetString() : "unknown";
+    auto elem_width = child.GetValue() ? child.GetValue()->GetWidth() : 0;
+    auto count = elem_width > 0 ? width / elem_width : 0;
+    result = std::format("Type: {} (array, {} bytes)\n  {}[{}]\n", type_name,
+                         width, elem, count);
+  } else if (tc == FunctionTypeClass) {
+    result = std::format("Type: {} (function)\n  {}\n", type_name,
+                         type->GetString());
+  } else {
+    result = std::format("Type: {} ({}, {} bytes)\n  {}\n", type_name, kind,
+                         width, type->GetString());
   }
 
   return {{"content", {{{"type", "text"}, {"text", result}}}}};

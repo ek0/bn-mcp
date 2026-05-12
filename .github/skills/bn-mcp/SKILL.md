@@ -1,6 +1,6 @@
 ---
 name: bn-mcp
-description: 'Binary Ninja MCP server plugin — analyze binaries, inspect LLIL, query functions/strings/xrefs via MCP tools. Use when: analyzing a binary through Binary Ninja MCP; inspecting LLIL or SSA instruction trees; querying functions, strings, or cross-references; adding new MCP tools; writing unit tests; debugging build or ABI issues; registering external tools from other plugins.'
+description: 'Binary Ninja MCP server plugin — analyze binaries, inspect LLIL, query functions/strings/xrefs/types via MCP tools. Use when: analyzing a binary through Binary Ninja MCP; inspecting LLIL or SSA instruction trees; querying functions, strings, or cross-references; looking up struct/enum/typedef definitions; adding new MCP tools; writing unit tests; debugging build or ABI issues; registering external tools from other plugins.'
 ---
 
 # bn-mcp
@@ -37,6 +37,13 @@ All tools use `view_id` (returned by `load_executable`) to identify a binary.
 | `get_function_info` | `view_id`, `address` (int) | Function details: name, calling convention, return type, parameters, basic block count. |
 | `get_strings` | `view_id`, optional `start`+`length` (int) | List strings: address, length, content. Optionally filter by address range. |
 | `get_xrefs` | `view_id`, `address` (int) | Cross-references to an address: code refs (callers with function names) and data refs. |
+
+### Types
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `list_types` | `view_id` | List all defined types: name, kind (struct/enum/union/typedef), size. |
+| `get_type_info` | `view_id`, `type_name` (string) | Full type definition. Structs: members with name, type, offset, size. Enums: values with name and constant. Typedefs: underlying type. |
 
 ### Low Level IL
 
@@ -79,10 +86,12 @@ Leaf operands have a `type` field (`register`, `int`, `flag`, `register_ssa`, `f
 1. `load_executable` with the binary path → note the `view_id`
 2. `list_functions` to discover functions of interest
 3. `get_function_info` for details on a specific function
-4. `list_llil_instructions` to see the IL for a function
-5. `get_llil_expr_tree` to inspect a specific instruction's operand tree
-6. `get_xrefs` to trace callers/data references
-7. `close_binary_view` when done
+4. `list_types` to see available struct/enum definitions
+5. `get_type_info` to inspect a struct's member layout (offsets, types)
+6. `list_llil_instructions` to see the IL for a function
+7. `get_llil_expr_tree` to inspect a specific instruction's operand tree
+8. `get_xrefs` to trace callers/data references
+9. `close_binary_view` when done
 
 ## Gotchas
 

@@ -146,6 +146,7 @@ FetchContent_MakeAvailable(bntest)
 
 add_library(bnmcp-tests SHARED
 	test/llil_tools_test.cpp
+	test/type_tools_test.cpp
 	test/test_plugin.cpp
 )
 target_link_libraries(bnmcp-tests PRIVATE bnmcp bntest)
