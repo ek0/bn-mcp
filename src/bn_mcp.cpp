@@ -237,7 +237,9 @@ void BnMcp::RegisterTools() {
       {.name = "get_function_info",
        .description =
            "Get detailed information about a function: name, calling "
-           "convention, parameters, return type, and basic block count.",
+           "convention, parameters, return type, and basic block count. "
+           "The address must be the exact start address of the function "
+           "as returned by list_functions.",
        .input_schema = {{"type", "object"},
                         {"properties",
                          {{"view_id",
@@ -246,7 +248,9 @@ void BnMcp::RegisterTools() {
                              "The view ID returned by load_executable"}}},
                           {"address",
                            {{"type", "integer"},
-                            {"description", "Address of the function"}}}}},
+                            {"description",
+                             "Start address of the function (from "
+                             "list_functions)"}}}}},
                         {"required", {"view_id", "address"}}},
        .handler = [this](const nlohmann::json& args) {
          return GetFunctionInfo(args);
@@ -448,6 +452,34 @@ binja::Ref<binja::BinaryView> BnMcp::FindView(const std::string& view_id) {
   auto it = views_.find(view_id);
   if (it == views_.end()) return nullptr;
   return it->second;
+}
+
+std::vector<binja::Ref<binja::Function>> BnMcp::FindFunctionsAt(
+    binja::BinaryView* bv, uint64_t address) {
+  return bv->GetAnalysisFunctionsForAddress(address);
+}
+
+nlohmann::json BnMcp::NoFunctionError(binja::BinaryView* bv,
+                                      uint64_t address) {
+  std::string msg =
+      std::format("No function starts at address 0x{:x}.", address);
+
+  // Check if the address falls inside a known function and hint about it.
+  auto containing = bv->GetAnalysisFunctionsContainingAddress(address);
+  if (!containing.empty()) {
+    auto& f = containing[0];
+    auto name =
+        f->GetSymbol()
+            ? f->GetSymbol()->GetFullName()
+            : std::format("sub_{:x}", f->GetStart());
+    msg += std::format(
+        " However, this address is inside '{}' which starts at 0x{:x}."
+        " Use that start address instead.",
+        name, f->GetStart());
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", msg}}}},
+          {"isError", true}};
 }
 
 BNBinaryView* BnMcp::GetView(const char* view_id) {
@@ -730,14 +762,8 @@ nlohmann::json BnMcp::ListLlilImpl(const nlohmann::json& args, bool ssa) {
             {"isError", true}};
   }
 
-  auto funcs = bv->GetAnalysisFunctionsForAddress(address);
-  if (funcs.empty()) {
-    return {
-        {"content",
-         {{{"type", "text"},
-           {"text", std::format("No function at address 0x{:x}", address)}}}},
-        {"isError", true}};
-  }
+  auto funcs = FindFunctionsAt(bv.GetPtr(), address);
+  if (funcs.empty()) return NoFunctionError(bv.GetPtr(), address);
 
   auto func = funcs[0];
   auto base_llil = func->GetLowLevelIL();
@@ -789,14 +815,8 @@ nlohmann::json BnMcp::GetLlilExprTreeImpl(const nlohmann::json& args,
             {"isError", true}};
   }
 
-  auto funcs = bv->GetAnalysisFunctionsForAddress(address);
-  if (funcs.empty()) {
-    return {
-        {"content",
-         {{{"type", "text"},
-           {"text", std::format("No function at address 0x{:x}", address)}}}},
-        {"isError", true}};
-  }
+  auto funcs = FindFunctionsAt(bv.GetPtr(), address);
+  if (funcs.empty()) return NoFunctionError(bv.GetPtr(), address);
 
   auto func = funcs[0];
   auto base_llil = func->GetLowLevelIL();
@@ -875,14 +895,8 @@ nlohmann::json BnMcp::GetFunctionInfo(const nlohmann::json& args) {
             {"isError", true}};
   }
 
-  auto funcs = bv->GetAnalysisFunctionsForAddress(address);
-  if (funcs.empty()) {
-    return {
-        {"content",
-         {{{"type", "text"},
-           {"text", std::format("No function at address 0x{:x}", address)}}}},
-        {"isError", true}};
-  }
+  auto funcs = FindFunctionsAt(bv.GetPtr(), address);
+  if (funcs.empty()) return NoFunctionError(bv.GetPtr(), address);
 
   auto func = funcs[0];
   auto name = func->GetSymbol() ? func->GetSymbol()->GetFullName()

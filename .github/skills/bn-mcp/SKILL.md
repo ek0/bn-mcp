@@ -33,8 +33,8 @@ All tools use `view_id` (returned by `load_executable`) to identify a binary.
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `list_functions` | `view_id` | List all functions: address, size, name. |
-| `get_function_info` | `view_id`, `address` (int) | Function details: name, calling convention, return type, parameters, basic block count. |
+| `list_functions` | `view_id` | List all functions: start address, size, name. |
+| `get_function_info` | `view_id`, `address` (int) | Function details: name, calling convention, return type, parameters, basic block count. `address` must be the exact start address from `list_functions`. |
 | `get_strings` | `view_id`, optional `start`+`length` (int) | List strings: address, length, content. Optionally filter by address range. |
 | `get_xrefs` | `view_id`, `address` (int) | Cross-references to an address: code refs (callers with function names) and data refs. |
 
@@ -49,10 +49,10 @@ All tools use `view_id` (returned by `load_executable`) to identify a binary.
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `list_llil_instructions` | `view_id`, `address` (int) | List non-SSA LLIL: index, address, operation, text. |
-| `list_llil_ssa_instructions` | `view_id`, `address` (int) | List SSA LLIL: index, address, operation, text with versioned registers. |
-| `get_llil_expr_tree` | `view_id`, `address` (int), `instr_index` (int) | Recursive expression tree for a non-SSA instruction (JSON). |
-| `get_llil_ssa_expr_tree` | `view_id`, `address` (int), `instr_index` (int) | Recursive expression tree for an SSA instruction (JSON). |
+| `list_llil_instructions` | `view_id`, `address` (int) | List non-SSA LLIL for a function. `address` must be the exact start address from `list_functions`. |
+| `list_llil_ssa_instructions` | `view_id`, `address` (int) | List SSA LLIL for a function. `address` must be the exact start address from `list_functions`. |
+| `get_llil_expr_tree` | `view_id`, `address` (int), `instr_index` (int) | Recursive expression tree for a non-SSA instruction. `address` must be the function's start address. |
+| `get_llil_ssa_expr_tree` | `view_id`, `address` (int), `instr_index` (int) | Recursive expression tree for an SSA instruction. `address` must be the function's start address. |
 
 ### Expression Tree Output Format
 
@@ -95,6 +95,7 @@ Leaf operands have a `type` field (`register`, `int`, `flag`, `register_ssa`, `f
 
 ## Gotchas
 
+- All tools that take a function `address` require the **exact start address** as reported by `list_functions`. Passing an address that is inside a function but not its start will fail. Use `list_functions` first to obtain the correct start addresses.
 - Binary Ninja must be running before the MCP server is available
 - `load_executable` runs full analysis — it blocks and may take a while for large binaries
 - `view_id` is an opaque handle managed by bn-mcp — do NOT pass it to `BinaryNinja::Load()` or treat it as a file path

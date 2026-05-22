@@ -56,6 +56,13 @@ class BnMcp {
   // Helpers
   BinaryNinja::Ref<BinaryNinja::BinaryView> FindView(
       const std::string& view_id);
+  // Find functions starting at the given address.
+  std::vector<BinaryNinja::Ref<BinaryNinja::Function>> FindFunctionsAt(
+      BinaryNinja::BinaryView* bv, uint64_t address);
+  // Build an error response when no function starts at the given address.
+  // If the address is inside a known function, the message hints at its start.
+  nlohmann::json NoFunctionError(BinaryNinja::BinaryView* bv,
+                                 uint64_t address);
   nlohmann::json ListLlilImpl(const nlohmann::json& args, bool ssa);
   nlohmann::json GetLlilExprTreeImpl(const nlohmann::json& args, bool ssa);
 
