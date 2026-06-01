@@ -37,6 +37,11 @@ All tools use `view_id` (returned by `load_executable`) to identify a binary.
 | `get_function_info` | `view_id`, `address` (int) | Function details: name, calling convention, return type, parameters, basic block count. `address` must be the exact start address from `list_functions`. |
 | `get_strings` | `view_id`, optional `start`+`length` (int) | List strings: address, length, content. Optionally filter by address range. |
 | `get_xrefs` | `view_id`, `address` (int) | Cross-references to an address: code refs (callers with function names) and data refs. |
+| `get_disassembly` | `view_id`, `address` (int), optional `max_lines` (int) | Assembly text for a function grouped by basic block. `address` must be the exact start address from `list_functions`. |
+| `list_imports` | `view_id` | List imported and external symbols: address, kind (func/data/extern), name. |
+| `list_exports` | `view_id` | List exported/global symbols (global and weak binding): address, kind, name. |
+| `list_segments` | `view_id` | List memory segments: start address, length, permission flags (rwx). |
+| `list_sections` | `view_id` | List named sections: start address, length, name, semantics (code/data/external). |
 
 ### Types
 
@@ -86,12 +91,15 @@ Leaf operands have a `type` field (`register`, `int`, `flag`, `register_ssa`, `f
 1. `load_executable` with the binary path → note the `view_id`
 2. `list_functions` to discover functions of interest
 3. `get_function_info` for details on a specific function
-4. `list_types` to see available struct/enum definitions
-5. `get_type_info` to inspect a struct's member layout (offsets, types)
-6. `list_llil_instructions` to see the IL for a function
-7. `get_llil_expr_tree` to inspect a specific instruction's operand tree
-8. `get_xrefs` to trace callers/data references
-9. `close_binary_view` when done
+4. `get_disassembly` to read the assembly for a function
+5. `list_imports` / `list_exports` to see external dependencies and public API
+6. `list_segments` / `list_sections` to understand the memory layout
+7. `list_types` to see available struct/enum definitions
+8. `get_type_info` to inspect a struct's member layout (offsets, types)
+9. `list_llil_instructions` to see the IL for a function
+10. `get_llil_expr_tree` to inspect a specific instruction's operand tree
+11. `get_xrefs` to trace callers/data references
+12. `close_binary_view` when done
 
 ## Gotchas
 

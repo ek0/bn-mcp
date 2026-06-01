@@ -40,7 +40,6 @@ set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_COMPILE ON CACHE BOOL "" FORCE)
-set(HTTPLIB_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(httplib
   GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
   GIT_TAG v0.18.3
@@ -92,14 +91,39 @@ install(TARGETS bnmcp-plugin DESTINATION "$ENV{APPDATA}\\Binary Ninja\\plugins")
 
 # --- CMake package config for consumers ---
 include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
+
+# Install the plugin DLL as an exportable package.
+install(TARGETS bnmcp-plugin
+	EXPORT bnmcpTargets
+	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+install(DIRECTORY include/bnmcp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(EXPORT bnmcpTargets
+	FILE bnmcpTargets.cmake
+	NAMESPACE bnmcp::
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/bnmcp)
+
+configure_package_config_file(
+	cmake/bnmcpConfig.cmake.in
+	"${CMAKE_CURRENT_BINARY_DIR}/bnmcpConfig.cmake"
+	INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/bnmcp)
 
 write_basic_package_version_file(
 	"${CMAKE_CURRENT_BINARY_DIR}/bnmcpConfigVersion.cmake"
 	VERSION 0.1.0
 	COMPATIBILITY SameMajorVersion)
 
+install(FILES
+	"${CMAKE_CURRENT_BINARY_DIR}/bnmcpConfig.cmake"
+	"${CMAKE_CURRENT_BINARY_DIR}/bnmcpConfigVersion.cmake"
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/bnmcp)
+
 # Export from the build tree so FetchContent consumers also get the targets.
-export(TARGETS bnmcp-plugin
+export(EXPORT bnmcpTargets
 	FILE "${CMAKE_CURRENT_BINARY_DIR}/bnmcpTargets.cmake"
 	NAMESPACE bnmcp::)
 

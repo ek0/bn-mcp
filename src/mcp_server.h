@@ -28,7 +28,8 @@ class McpServer {
     std::string version = "0.1.0";
   };
 
-  explicit McpServer(Options options = {});
+  McpServer() : McpServer(Options{}) {}
+  explicit McpServer(Options options);
   ~McpServer();
 
   McpServer(const McpServer&) = delete;

@@ -4,6 +4,7 @@
 #include <binaryninjacore.h>
 #include <lowlevelilinstruction.h>
 
+#include <algorithm>
 #include <format>
 #include <mutex>
 #include <string>
@@ -336,6 +337,100 @@ void BnMcp::RegisterTools() {
                         {"required", {"view_id", "type_name"}}},
        .handler = [this](const nlohmann::json& args) {
          return GetTypeInfo(args);
+       }});
+
+  server_.RegisterTool(
+      {.name = "get_disassembly",
+       .description =
+           "Get the disassembly text for a function. Returns assembly "
+           "instructions grouped by basic block with address prefixes. "
+           "The address must be the exact start address of the function "
+           "as returned by list_functions.",
+       .input_schema =
+           {{"type", "object"},
+            {"properties",
+             {{"view_id",
+               {{"type", "string"},
+                {"description", "The view ID returned by load_executable"}}},
+              {"address",
+               {{"type", "integer"},
+                {"description",
+                 "Start address of the function (from list_functions)"}}},
+              {"max_lines",
+               {{"type", "integer"},
+                {"description",
+                 "Maximum number of lines to return (optional, "
+                 "default unlimited)"}}}}},
+            {"required", {"view_id", "address"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return GetDisassembly(args);
+       }});
+
+  server_.RegisterTool(
+      {.name = "list_imports",
+       .description =
+           "List imported and external symbols in a binary view. Includes "
+           "imported functions, imported data, and external symbols for "
+           "cross-platform coverage. Returns each symbol's address, kind, "
+           "and name.",
+       .input_schema = {{"type", "object"},
+                        {"properties",
+                         {{"view_id",
+                           {{"type", "string"},
+                            {"description",
+                             "The view ID returned by load_executable"}}}}},
+                        {"required", {"view_id"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return ListImports(args);
+       }});
+
+  server_.RegisterTool(
+      {.name = "list_exports",
+       .description =
+           "List exported/global symbols in a binary view. Returns globally "
+           "bound function and data symbols visible to external consumers. "
+           "Returns each symbol's address, kind, and name.",
+       .input_schema = {{"type", "object"},
+                        {"properties",
+                         {{"view_id",
+                           {{"type", "string"},
+                            {"description",
+                             "The view ID returned by load_executable"}}}}},
+                        {"required", {"view_id"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return ListExports(args);
+       }});
+
+  server_.RegisterTool(
+      {.name = "list_segments",
+       .description =
+           "List memory segments in a binary view. Returns each segment's "
+           "start address, length, and permission flags (read/write/execute).",
+       .input_schema = {{"type", "object"},
+                        {"properties",
+                         {{"view_id",
+                           {{"type", "string"},
+                            {"description",
+                             "The view ID returned by load_executable"}}}}},
+                        {"required", {"view_id"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return ListSegments(args);
+       }});
+
+  server_.RegisterTool(
+      {.name = "list_sections",
+       .description =
+           "List named sections in a binary view. Returns each section's "
+           "start address, length, name, and semantics (code/data/external).",
+       .input_schema = {{"type", "object"},
+                        {"properties",
+                         {{"view_id",
+                           {{"type", "string"},
+                            {"description",
+                             "The view ID returned by load_executable"}}}}},
+                        {"required", {"view_id"}}},
+       .handler = [this](const nlohmann::json& args) {
+         return ListSections(args);
        }});
 }
 
@@ -1159,6 +1254,300 @@ nlohmann::json BnMcp::GetTypeInfo(const nlohmann::json& args) {
   } else {
     result = std::format("Type: {} ({}, {} bytes)\n  {}\n", type_name, kind,
                          width, type->GetString());
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+nlohmann::json BnMcp::GetDisassembly(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+  auto address = args.at("address").get<uint64_t>();
+  size_t max_lines = 0;  // 0 = unlimited
+  if (args.contains("max_lines")) {
+    if (!args["max_lines"].is_number_integer()) {
+      return {{"content",
+               {{{"type", "text"},
+                 {"text", "max_lines must be a non-negative integer"}}}},
+              {"isError", true}};
+    }
+    auto val = args["max_lines"].get<int64_t>();
+    if (val < 0) {
+      return {{"content",
+               {{{"type", "text"},
+                 {"text", "max_lines must be a non-negative integer"}}}},
+              {"isError", true}};
+    }
+    max_lines = static_cast<size_t>(val);
+  }
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  auto funcs = FindFunctionsAt(bv.GetPtr(), address);
+  if (funcs.empty()) return NoFunctionError(bv.GetPtr(), address);
+
+  auto func = funcs[0];
+  auto name = func->GetSymbol() ? func->GetSymbol()->GetFullName()
+                                : std::format("sub_{:x}", func->GetStart());
+
+  auto bbs = func->GetBasicBlocks();
+  std::sort(bbs.begin(), bbs.end(),
+            [](const binja::Ref<binja::BasicBlock>& a,
+               const binja::Ref<binja::BasicBlock>& b) {
+              return a->GetStart() < b->GetStart();
+            });
+
+  binja::Ref<binja::DisassemblySettings> settings =
+      new binja::DisassemblySettings();
+
+  std::string result =
+      std::format("Disassembly for {} at 0x{:x}:\n", name, func->GetStart());
+
+  size_t line_count = 0;
+  bool truncated = false;
+  for (size_t bi = 0; bi < bbs.size(); bi++) {
+    auto& bb = bbs[bi];
+
+    // Peek: only emit block header if at least one instruction line fits.
+    if (max_lines > 0 && line_count + 1 >= max_lines) {
+      truncated = true;
+      break;
+    }
+    result += std::format("; block [0x{:x}, 0x{:x})\n", bb->GetStart(),
+                          bb->GetEnd());
+    line_count++;
+
+    auto lines = bb->GetDisassemblyText(settings.GetPtr());
+    for (const auto& line : lines) {
+      result += std::format("  0x{:x}  {}\n", line.addr,
+                            TokensToString(line.tokens));
+      line_count++;
+      if (max_lines > 0 && line_count >= max_lines) {
+        truncated = true;
+        break;
+      }
+    }
+    if (truncated) break;
+  }
+
+  if (truncated) {
+    result += std::format("... truncated after {} lines\n", max_lines);
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+static const char* SymbolTypeLabel(BNSymbolType type) {
+  switch (type) {
+    case ImportedFunctionSymbol:
+      return "func";
+    case ImportedDataSymbol:
+      return "data";
+    case ExternalSymbol:
+      return "extern";
+    case FunctionSymbol:
+      return "func";
+    case DataSymbol:
+      return "data";
+    default:
+      return "other";
+  }
+}
+
+nlohmann::json BnMcp::ListImports(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  // Collect imported and external symbols for cross-platform coverage.
+  // ImportedFunction/ImportedData cover PE imports and ELF PLT stubs.
+  // ExternalSymbol covers ELF/Mach-O unresolved externals.
+  struct SymEntry {
+    uint64_t address;
+    BNSymbolType type;
+    std::string name;
+  };
+  std::vector<SymEntry> entries;
+
+  auto collect = [&](BNSymbolType st) {
+    for (const auto& sym : bv->GetSymbolsOfType(st)) {
+      entries.push_back(
+          {sym->GetAddress(), sym->GetType(), sym->GetFullName()});
+    }
+  };
+  collect(ImportedFunctionSymbol);
+  collect(ImportedDataSymbol);
+  collect(ExternalSymbol);
+
+  // Deduplicate: prefer ImportedFunction/ImportedData over ExternalSymbol
+  // when the same (address, name) pair appears from multiple queries.
+  auto import_priority = [](BNSymbolType t) -> int {
+    switch (t) {
+      case ImportedFunctionSymbol: return 0;
+      case ImportedDataSymbol:     return 1;
+      case ExternalSymbol:         return 2;
+      default:                     return 3;
+    }
+  };
+  std::sort(entries.begin(), entries.end(),
+            [&](const auto& a, const auto& b) {
+              if (a.address != b.address) return a.address < b.address;
+              if (a.name != b.name) return a.name < b.name;
+              return import_priority(a.type) < import_priority(b.type);
+            });
+  entries.erase(std::unique(entries.begin(), entries.end(),
+                            [](const auto& a, const auto& b) {
+                              return a.address == b.address &&
+                                     a.name == b.name;
+                            }),
+                entries.end());
+
+  std::string result =
+      std::format("Imported/external symbols ({}):\n", entries.size());
+  for (const auto& e : entries) {
+    result += std::format("  0x{:x}  {:6s}  {}\n", e.address,
+                          SymbolTypeLabel(e.type), e.name);
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+nlohmann::json BnMcp::ListExports(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  struct SymEntry {
+    uint64_t address;
+    BNSymbolType type;
+    std::string name;
+  };
+  std::vector<SymEntry> entries;
+
+  auto collect = [&](BNSymbolType st) {
+    for (const auto& sym : bv->GetSymbolsOfType(st)) {
+      auto binding = sym->GetBinding();
+      if (binding != GlobalBinding && binding != WeakBinding) continue;
+      entries.push_back(
+          {sym->GetAddress(), sym->GetType(), sym->GetFullName()});
+    }
+  };
+  collect(FunctionSymbol);
+  collect(DataSymbol);
+
+  std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+    if (a.address != b.address) return a.address < b.address;
+    return a.name < b.name;
+  });
+
+  std::string result =
+      std::format("Exported/global symbols ({}):\n", entries.size());
+  for (const auto& e : entries) {
+    result += std::format("  0x{:x}  {:6s}  {}\n", e.address,
+                          SymbolTypeLabel(e.type), e.name);
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+static const char* SegmentFlagsToRwx(uint32_t flags) {
+  // Index by (readable:2, writable:1, executable:0) bits.
+  static const char* const kTable[] = {
+      "---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx",
+  };
+  unsigned idx = 0;
+  if (flags & SegmentReadable) idx |= 4;
+  if (flags & SegmentWritable) idx |= 2;
+  if (flags & SegmentExecutable) idx |= 1;
+  return kTable[idx];
+}
+
+nlohmann::json BnMcp::ListSegments(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  auto segments = bv->GetSegments();
+  std::sort(segments.begin(), segments.end(),
+            [](const binja::Ref<binja::Segment>& a,
+               const binja::Ref<binja::Segment>& b) {
+              return a->GetStart() < b->GetStart();
+            });
+
+  std::string result = std::format("Segments ({}):\n", segments.size());
+  for (const auto& seg : segments) {
+    result += std::format("  0x{:x}  0x{:x}  {}\n", seg->GetStart(),
+                          seg->GetLength(), SegmentFlagsToRwx(seg->GetFlags()));
+  }
+
+  return {{"content", {{{"type", "text"}, {"text", result}}}}};
+}
+
+static const char* SectionSemanticsLabel(BNSectionSemantics sem) {
+  switch (sem) {
+    case ReadOnlyCodeSectionSemantics:
+      return "code, readonly";
+    case ReadOnlyDataSectionSemantics:
+      return "data, readonly";
+    case ReadWriteDataSectionSemantics:
+      return "data, read-write";
+    case ExternalSectionSemantics:
+      return "external";
+    default:
+      return "";
+  }
+}
+
+nlohmann::json BnMcp::ListSections(const nlohmann::json& args) {
+  auto view_id = args.at("view_id").get<std::string>();
+
+  auto bv = FindView(view_id);
+  if (!bv) {
+    return {{"content",
+             {{{"type", "text"},
+               {"text", std::format("No binary view with ID: {}", view_id)}}}},
+            {"isError", true}};
+  }
+
+  auto sections = bv->GetSections();
+  std::sort(sections.begin(), sections.end(),
+            [](const binja::Ref<binja::Section>& a,
+               const binja::Ref<binja::Section>& b) {
+              return a->GetStart() < b->GetStart();
+            });
+
+  std::string result = std::format("Sections ({}):\n", sections.size());
+  for (const auto& sec : sections) {
+    auto sem = SectionSemanticsLabel(sec->GetSemantics());
+    auto name = sec->GetName();
+    if (name.empty()) name = "(unnamed)";
+    result += std::format("  0x{:x}  0x{:x}  {}", sec->GetStart(),
+                          sec->GetLength(), name);
+    if (sem[0] != '\0') result += std::format("  [{}]", sem);
+    result += '\n';
   }
 
   return {{"content", {{{"type", "text"}, {"text", result}}}}};

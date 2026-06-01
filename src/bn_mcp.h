@@ -52,6 +52,11 @@ class BnMcp {
   nlohmann::json GetXrefs(const nlohmann::json& args);
   nlohmann::json ListTypes(const nlohmann::json& args);
   nlohmann::json GetTypeInfo(const nlohmann::json& args);
+  nlohmann::json GetDisassembly(const nlohmann::json& args);
+  nlohmann::json ListImports(const nlohmann::json& args);
+  nlohmann::json ListExports(const nlohmann::json& args);
+  nlohmann::json ListSegments(const nlohmann::json& args);
+  nlohmann::json ListSections(const nlohmann::json& args);
 
   // Helpers
   BinaryNinja::Ref<BinaryNinja::BinaryView> FindView(
